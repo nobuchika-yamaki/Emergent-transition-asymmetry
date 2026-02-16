@@ -1,0 +1,117 @@
+import numpy as np
+import pandas as pd
+
+# =========================
+# 2.2 Parameters
+# =========================
+alpha = 1.0
+beta  = 0.3
+tau   = 1.0
+sigma = 0.15
+
+dt = 0.01
+T_total = 5000.0
+T_burn  = 1000.0
+
+# =========================
+# 2.3 Integration
+# =========================
+n_steps = int(T_total / dt)
+burn_steps = int(T_burn / dt)
+delay_steps = int(tau / dt)
+
+x = np.zeros(n_steps)
+x[:delay_steps] = np.random.uniform(-1, 1, delay_steps)
+
+for t in range(delay_steps, n_steps - 1):
+    drift = -alpha * x[t] + beta * np.tanh(x[t - delay_steps])
+    diffusion = sigma * np.random.randn()
+    x[t + 1] = x[t] + drift * dt + diffusion * np.sqrt(dt)
+
+x = x[burn_steps:]
+
+# =========================
+# 2.4 Coarse graining
+# =========================
+def coarse_grain(x, N):
+    bins = np.percentile(x, np.linspace(1, 99, N + 1))
+    return np.digitize(x, bins) - 1
+
+# =========================
+# 2.5 Transition matrix
+# =========================
+def transition_matrix(states, N, k):
+    P = np.zeros((N, N))
+    for t in range(len(states) - k):
+        i, j = states[t], states[t + k]
+        if 0 <= i < N and 0 <= j < N:
+            P[i, j] += 1
+    row_sum = P.sum(axis=1, keepdims=True)
+    P[row_sum > 0] /= row_sum[row_sum > 0]
+    return P
+
+# =========================
+# 2.6 Asymmetry
+# =========================
+def asymmetry_matrix(P):
+    return P - P.T
+
+def global_asymmetry(A):
+    return np.sum(np.abs(np.triu(A, 1)))
+
+# =========================
+# 2.7 Perturbation
+# =========================
+def perturb(x, strength=1.0):
+    y = x.copy()
+    idx = len(y) // 2
+    y[idx] += strength
+    return y
+
+# =========================
+# Main analysis
+# =========================
+N = 12
+k = int(tau / dt)
+
+states_pre  = coarse_grain(x, N)
+P_pre = transition_matrix(states_pre, N, k)
+A_pre = asymmetry_matrix(P_pre)
+
+x_pert = perturb(x)
+states_post = coarse_grain(x_pert, N)
+P_post = transition_matrix(states_post, N, k)
+A_post = asymmetry_matrix(P_post)
+
+# Recovery metric R
+num = 0.0
+den = 0.0
+for i in range(N):
+    for j in range(i + 1, N):
+        num += A_pre[i, j] * A_post[i, j]
+        den += A_pre[i, j] ** 2
+R = num / den if den > 0 else np.nan
+
+# =========================
+# Save outputs (for Results)
+# =========================
+pd.DataFrame(P_pre).to_csv("P_pre.csv", index=False)
+pd.DataFrame(P_post).to_csv("P_post.csv", index=False)
+pd.DataFrame(A_pre).to_csv("A_pre.csv", index=False)
+pd.DataFrame(A_post).to_csv("A_post.csv", index=False)
+
+summary = pd.DataFrame({
+    "A_pre": [global_asymmetry(A_pre)],
+    "A_post": [global_asymmetry(A_post)],
+    "R": [R],
+    "alpha": [alpha],
+    "beta": [beta],
+    "tau": [tau],
+    "sigma": [sigma],
+    "dt": [dt],
+    "DeltaT": [tau]
+})
+summary.to_csv("summary.csv", index=False)
+
+print("Analysis completed.")
+print(summary)
